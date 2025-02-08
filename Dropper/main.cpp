@@ -10,10 +10,6 @@
 /*
 To Do	
 			Bugs
-	[] CreateToolhelp32Snapshot doesnt seem to work with GetProcAddress when provided in any way other than a string literal??
-	[] VirtualProtectEx doesnt seem to work with GetProcAddress when provided in any way other than when I provide VirtualProtectEx as a string literal
-	[] Notepad.exe is deXOR'd into notepad.bfl. This obviously is preventing implementation of XOR functionality into the strcmpiA function.
-	[]Decode shellcode once it is injected into remote buffer
 
 
 			Later 
